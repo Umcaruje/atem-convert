@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATEM → Premiere Pro</title>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;700;800&display=swap');
+
+  :root {
+    --bg: #0c0c0c;
+    --surface: #141414;
+    --border: #252525;
+    --accent: #e8ff47;
+    --accent2: #ff6b35;
+    --text: #efefef;
+    --muted: #4a4a4a;
+    --ok: #4ade80;
+    --err: #f87171;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 60px;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse 50% 35% at 15% 5%, rgba(232,255,71,.05) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 50% at 85% 90%, rgba(255,107,53,.04) 0%, transparent 60%);
+  }
+
+  .wrap { width: 100%; max-width: 660px; display: flex; flex-direction: column; gap: 28px; }
+
+  /* HEADER */
+  header { display: flex; flex-direction: column; gap: 6px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: #000; background: var(--accent); padding: 3px 10px; width: fit-content;
+  }
+  h1 {
+    font-family: 'Syne', sans-serif; font-weight: 800;
+    font-size: clamp(26px, 5vw, 44px); line-height: 1.05; letter-spacing: -.02em;
+  }
+  h1 em { color: var(--accent); font-style: normal; }
+  .sub { font-size: 11px; color: var(--muted); line-height: 1.7; letter-spacing: .04em; }
+
+  /* CARD */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 24px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .card-label {
+    font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--muted); display: flex; align-items: center; gap: 10px;
+  }
+  .card-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* DROP ZONE */
+  .drop {
+    border: 1px dashed var(--border); padding: 28px 20px;
+    cursor: pointer; transition: all .15s; position: relative;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    text-align: center;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: rgba(232,255,71,.03); }
+  .drop.loaded { border-style: solid; border-color: var(--accent); background: rgba(232,255,71,.04); }
+  .drop.loaded.prproj { border-color: var(--accent2); background: rgba(255,107,53,.04); }
+  .drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .drop-icon { opacity: .25; transition: opacity .15s; }
+  .drop.loaded .drop-icon { display: none; }
+  .drop-title { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px; }
+  .drop-hint { font-size: 11px; color: var(--muted); }
+  .drop.loaded .drop-hint { display: none; }
+  .file-info { display: none; font-size: 12px; }
+  .drop.loaded .file-info { display: block; color: var(--accent); }
+  .drop.loaded.prproj .file-info { color: var(--accent2); }
+  .drop.loaded .drop-title { font-size: 10px; color: var(--muted); letter-spacing: .1em; }
+
+  /* STATS */
+  .stats { display: none; grid-template-columns: repeat(4,1fr); gap: 1px; background: var(--border); }
+  .stats.show { display: grid; }
+  .stat { background: var(--surface); padding: 14px; }
+  .stat-v { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 20px; color: var(--accent); }
+  .stat-k { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-top: 2px; }
+
+  /* PYODIDE STATUS */
+  .py-status {
+    font-size: 11px; color: var(--muted); padding: 10px 14px;
+    background: #000; border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .py-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+    transition: background .3s;
+  }
+  .py-dot.loading { background: var(--accent); animation: blink 1s infinite; }
+  .py-dot.ready { background: var(--ok); animation: none; }
+  .py-dot.error { background: var(--err); animation: none; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* CONVERT BUTTON */
+  .convert-btn {
+    background: var(--accent); color: #000; border: none; width: 100%;
+    padding: 16px; font-family: 'Syne', sans-serif; font-weight: 800;
+    font-size: 13px; letter-spacing: .12em; text-transform: uppercase;
+    cursor: pointer; transition: all .15s;
+  }
+  .convert-btn:hover:not(:disabled) { background: #fff; transform: translateY(-1px); }
+  .convert-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
+  .convert-btn.running { background: #333; color: #999; }
+
+  /* LOG */
+  .log {
+    display: none; background: #000; border: 1px solid var(--border);
+    padding: 14px; font-size: 11px; line-height: 1.9; color: var(--muted);
+    max-height: 200px; overflow-y: auto;
+  }
+  .log.show { display: block; }
+  .log .ok { color: var(--ok); }
+  .log .err { color: var(--err); }
+  .log .hi { color: var(--accent); }
+
+  /* DOWNLOAD */
+  .dl-btn {
+    display: none; width: 100%; padding: 14px; text-align: center;
+    background: transparent; color: var(--accent); border: 1px solid var(--accent);
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 12px;
+    letter-spacing: .12em; text-transform: uppercase; cursor: pointer;
+    text-decoration: none; transition: all .15s;
+    animation: pulse-glow 2s ease infinite;
+  }
+  .dl-btn.show { display: block; }
+  .dl-btn:hover { background: var(--accent); color: #000; }
+  @keyframes pulse-glow {
+    0%,100% { box-shadow: 0 0 0 0 rgba(232,255,71,0); }
+    50% { box-shadow: 0 0 0 5px rgba(232,255,71,.12); }
+  }
+
+  footer { font-size: 10px; color: var(--muted); text-align: center; line-height: 1.9; letter-spacing: .06em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="badge">ATEM Mini Pro ISO</div>
+    <h1>Apply <em>ATEM cuts</em><br>to Premiere</h1>
+    <p class="sub">
+      Drop your .drp and a template .prproj with multicam set up.<br>
+      Get back a .prproj with all 247 cuts applied as a native sequence.<br>
+      Runs entirely in your browser — no installation, no uploads.
+    </p>
+  </header>
+
+  <!-- PYODIDE STATUS -->
+  <div class="py-status" id="pyStatus">
+    <div class="py-dot loading" id="pyDot"></div>
+    <span id="pyText">Loading Python runtime… (first load ~8 MB, cached after)</span>
+  </div>
+
+  <!-- STEP 1: DRP -->
+  <div class="card">
+    <div class="card-label">Step 1 — ATEM Project</div>
+    <div class="drop" id="drpZone">
+      <input type="file" id="drpInput" accept=".drp">
+      <svg class="drop-icon" width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <rect x="1" y="1" width="38" height="38" rx="3" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <path d="M20 12v16M13 21l7 7 7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="drop-title">Drop .drp here or click to browse</div>
+      <div class="drop-hint">ATEM Mini Pro ISO project file</div>
+      <div class="file-info" id="drpInfo"></div>
+    </div>
+    <div class="stats" id="drpStats">
+      <div class="stat"><div class="stat-v" id="sCuts">—</div><div class="stat-k">Cuts</div></div>
+      <div class="stat"><div class="stat-v" id="sCams">—</div><div class="stat-k">Cameras</div></div>
+      <div class="stat"><div class="stat-v" id="sDur">—</div><div class="stat-k">Duration</div></div>
+      <div class="stat"><div class="stat-v" id="sFps">—</div><div class="stat-k">Format</div></div>
+    </div>
+  </div>
+
+  <!-- STEP 2: PRPROJ -->
+  <div class="card">
+    <div class="card-label">Step 2 — Template Project</div>
+    <div class="drop prproj" id="prprojZone">
+      <input type="file" id="prprojInput" accept=".prproj">
+      <svg class="drop-icon" width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <rect x="1" y="1" width="38" height="38" rx="3" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <path d="M20 12v16M13 21l7 7 7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="drop-title">Drop .prproj here or click to browse</div>
+      <div class="drop-hint">Must have a multicam sequence already set up</div>
+      <div class="file-info" id="prprojInfo"></div>
+    </div>
+  </div>
+
+  <!-- STEP 3: CONVERT -->
+  <div class="card">
+    <div class="card-label">Step 3 — Convert</div>
+    <button class="convert-btn" id="convertBtn" disabled>Convert</button>
+    <div class="log" id="log"></div>
+    <a class="dl-btn" id="dlBtn">↓ Download .prproj</a>
+  </div>
+
+  <footer>
+    All processing runs locally in your browser — no files leave your machine.<br>
+    Open in Chrome or Edge for best results.
+  </footer>
+
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let pyodide = null;
+let pyReady = false;
+let drpBytes = null;
+let drpName = '';
+let prprojBytes = null;
+let prprojName = '';
+
+// ── Python core code ───────────────────────────────────────────────────────
+const PY_CODE = `
+import json, gzip, re, uuid, io
+
+def tc_to_frames(tc, fps=50):
+    h, m, s, f = map(int, tc.split(':'))
+    return ((h * 3600 + m * 60 + s) * fps) + f
+
+def new_uid():
+    return str(uuid.uuid4())
+
+def parse_drp_text(text):
+    lines = text.strip().split('\\n')
+    events = [json.loads(l) for l in lines]
+    header = events[0]
+
+    video_mode = header.get('videoMode', '1080p50')
+    fps_map = {
+        '1080p25':25,'1080p50':50,'1080p2997':30,'1080p60':60,'1080p2398':24,
+        '1080i50':25,'1080i5994':30,'720p50':50,'720p5994':60,'2160p25':25,
+        '2160p50':50,'2160p2997':30,'2160p60':60
+    }
+    fps = fps_map.get(video_mode, 50)
+    tpf_map = {25:10160640000, 50:5080320000, 30:8467200000, 60:4233600000, 24:10584000000}
+    tpf = tpf_map[fps]
+
+    start_frame = tc_to_frames(header['masterTimecode'], fps)
+    end_frame   = tc_to_frames(events[-1]['masterTimecode'], fps)
+    total_frames = end_frame - start_frame
+
+    cuts = []
+    for e in events:
+        meb = e.get('mixEffectBlocks', [])
+        if not meb: continue
+        src = meb[0].get('source')
+        if src in [1, 2, 3, 4]:
+            frame = tc_to_frames(e['masterTimecode'], fps)
+            cuts.append({'rel_frame': frame - start_frame, 'cam': src})
+    cuts.append({'rel_frame': total_frames, 'cam': None})
+
+    cut_segs = []
+    for i in range(len(cuts) - 1):
+        s = cuts[i]['rel_frame'] * tpf
+        e = cuts[i+1]['rel_frame'] * tpf
+        if e > s:
+            cut_segs.append({'s': s, 'e': e, 'cam': cuts[i]['cam']})
+
+    return {
+        'cut_segs': cut_segs,
+        'dur': total_frames * tpf,
+        'tpf': tpf,
+        'fps': fps,
+        'video_mode': video_mode,
+        'total_frames': total_frames,
+        'cam_count': len(set(c['cam'] for c in cut_segs)),
+    }
+
+def analyze_prproj(xml):
+    """Extract multicam IDs from the template prproj."""
+    # mcMasterUid: two-step, find flag then backtrack
+    flag_idx = xml.find('Source.Monitor.Multicam.Enabled')
+    mc_master_uid = None
+    if flag_idx != -1:
+        mc_start = xml.rfind('<MasterClip', 0, flag_idx)
+        if mc_start != -1:
+            m = re.search(r'ObjectUID="([^"]+)"', xml[mc_start:mc_start+120])
+            if m: mc_master_uid = m.group(1)
+
+    if not mc_master_uid:
+        raise ValueError("No multicam MasterClip found in .prproj — make sure the project has a multicam sequence set up.")
+
+    # vssRef: VideoClip with IsMulticam -> Source ObjectRef
+    vss_ref = None
+    pos = 0
+    while True:
+        s = xml.find('<VideoClip ObjectID="', pos)
+        if s == -1: break
+        e = xml.find('</VideoClip>', s) + 12
+        block = xml[s:e]
+        if '<IsMulticam>true</IsMulticam>' in block:
+            m = re.search(r'<Source ObjectRef="(\\d+)"', block)
+            if m: vss_ref = m.group(1); break
+        pos = e
+
+    if not vss_ref:
+        raise ValueError("Could not find VideoSequenceSource — no IsMulticam VideoClips in .prproj.")
+
+    # assRef: AudioClip with SecondaryContents -> Source ObjectRef
+    ass_ids = [m.group(1) for m in re.finditer(r'<AudioSequenceSource ObjectID="(\\d+)"', xml)]
+    ass_ref = None
+    pos = 0
+    while True:
+        s = xml.find('<AudioClip ObjectID="', pos)
+        if s == -1: break
+        e = xml.find('</AudioClip>', s) + 12
+        block = xml[s:e]
+        if '<SecondaryContents' in block:
+            m = re.search(r'<Source ObjectRef="(\\d+)"', block)
+            if m and m.group(1) in ass_ids:
+                ass_ref = m.group(1); break
+        pos = e
+    if not ass_ref and ass_ids:
+        ass_ref = ass_ids[0]
+
+    # multicamVctiIds: VCTIs used by program cut (IsMulticam VideoClips)
+    mc_vc_ids = set()
+    pos = 0
+    while True:
+        s = xml.find('<VideoClip ObjectID="', pos)
+        if s == -1: break
+        e = xml.find('</VideoClip>', s) + 12
+        block = xml[s:e]
+        if '<IsMulticam>true</IsMulticam>' in block:
+            m = re.search(r'ObjectID="(\\d+)"', block)
+            if m: mc_vc_ids.add(m.group(1))
+        pos = e
+
+    mc_sub_ids = set()
+    pos = 0
+    while True:
+        s = xml.find('<SubClip ObjectID="', pos)
+        if s == -1: break
+        e = xml.find('</SubClip>', s) + 10
+        block = xml[s:e]
+        clip_ref = re.search(r'<Clip ObjectRef="(\\d+)"', block)
+        if clip_ref and clip_ref.group(1) in mc_vc_ids:
+            m = re.search(r'ObjectID="(\\d+)"', block)
+            if m: mc_sub_ids.add(m.group(1))
+        pos = e
+
+    mc_vcti_ids = set()
+    pos = 0
+    while True:
+        s = xml.find('<VideoClipTrackItem ObjectID="', pos)
+        if s == -1: break
+        e = xml.find('</VideoClipTrackItem>', s) + 21
+        block = xml[s:e]
+        sub_ref = re.search(r'<SubClip ObjectRef="(\\d+)"', block)
+        if sub_ref and sub_ref.group(1) in mc_sub_ids:
+            m = re.search(r'ObjectID="(\\d+)"', block)
+            if m: mc_vcti_ids.add(m.group(1))
+        pos = e
+
+    # progVtgId: VideoTrackGroup containing the program-cut VideoClipTrack
+    prog_vct_uid = None
+    pos = 0
+    while True:
+        s = xml.find('<VideoClipTrack ObjectUID="', pos)
+        if s == -1: break
+        e = xml.find('</VideoClipTrack>', s) + 17
+        block = xml[s:e]
+        track_item_refs = re.findall(r'<TrackItem[^>]+ObjectRef="(\\d+)"', block)
+        if any(r in mc_vcti_ids for r in track_item_refs):
+            m = re.search(r'ObjectUID="([^"]+)"', block)
+            if m: prog_vct_uid = m.group(1); break
+        pos = e
+
+    prog_vtg_id = None
+    if prog_vct_uid:
+        pos = 0
+        while True:
+            s = xml.find('<VideoTrackGroup ObjectID="', pos)
+            if s == -1: break
+            e = xml.find('</VideoTrackGroup>', s) + 18
+            block = xml[s:e]
+            if f'ObjectURef="{prog_vct_uid}"' in block:
+                m = re.search(r'ObjectID="(\\d+)"', block)
+                if m: prog_vtg_id = m.group(1); break
+            pos = e
+
+    return {
+        'mc_master_uid': mc_master_uid,
+        'vss_ref': vss_ref,
+        'ass_ref': ass_ref,
+        'mc_vcti_ids': mc_vcti_ids,
+        'prog_vtg_id': prog_vtg_id,
+    }
+
+def find_insertion_point(xml, analysis):
+    """Find where the program-cut section starts (first Link referencing a prog-cut VCTI).
+    
+    Returns (first_prog_link_pos, last_seq_end) where:
+    - part1 = xml[:first_prog_link_pos]  (everything up to first prog-cut Link)
+    - part3 = xml[last_seq_end:]         (from end of last sequence - preserves all
+                                          post-sequence support objects like VTG/ATG/DTG)
+    This matches the approach of build_prproj_v3.py which is known to work.
+    """
+    prog_vtg_id = analysis['prog_vtg_id']
+
+    # Find last sequence end - part3 starts here, preserving all post-seq objects
+    last_seq_end = xml.rfind('</Sequence>') + len('</Sequence>')
+
+    # Find prog-cut VTG and walk backward through consecutive Links to find first one
+    vtg_pos = xml.find(f'<VideoTrackGroup ObjectID="{prog_vtg_id}"') if prog_vtg_id else -1
+
+    if vtg_pos == -1:
+        # No existing prog-cut - append at last_seq_end
+        return last_seq_end, last_seq_end
+
+    # Walk backward from VTG through consecutive Links
+    first_prog_link_pos = vtg_pos
+    search_pos = vtg_pos
+    while True:
+        prev_end = xml.rfind('</Link>', 0, search_pos)
+        if prev_end == -1: break
+        prev_end += len('</Link>')
+        if xml[prev_end:search_pos].strip():  # non-whitespace between link and search_pos
+            break
+        prev_start = xml.rfind('<Link ObjectID="', 0, prev_end)
+        if prev_start == -1: break
+        first_prog_link_pos = prev_start
+        search_pos = prev_start
+
+    return first_prog_link_pos, last_seq_end
+
+def build_program_cut(drp, analysis):
+    """Build the replacement XML: program cut objects + sequence."""
+    cut_segs = drp['cut_segs']
+    dur = drp['dur']
+    tpf = drp['tpf']
+    mc_master_uid = analysis['mc_master_uid']
+    vss_ref = analysis['vss_ref']
+    ass_ref = analysis['ass_ref']
+    prog_vtg_id = analysis['prog_vtg_id']
+
+    n = len(cut_segs)
+    cam_to_tidx = {1: 0, 2: 1, 3: 2, 4: 3}
+    VTG_GUID = "228cda18-3625-4d2d-951e-348879e4ed93"
+    ATG_GUID = "80b8e3d5-6dca-4195-aefb-cb5f407ab009"
+    DTG_GUID = "d8143ffe-eec4-4d2a-a909-d5f7bf094dc5"
+
+    next_id = [5000]
+    def nid(): v = next_id[0]; next_id[0] += 1; return str(v)
+
+    link_ids     = [nid() for _ in range(n)]
+    vcti_ids     = [nid() for _ in range(n)]
+    acti_ids     = [nid() for _ in range(n)]
+    vchain_ids   = [nid() for _ in range(n)]
+    achain_ids   = [nid() for _ in range(n)]
+    vsub_ids     = [nid() for _ in range(n)]
+    asub_ids     = [nid() for _ in range(n)]
+    vc_ids       = [nid() for _ in range(n)]
+    ac_ids       = [nid() for _ in range(n)]
+    sc1_ids      = [nid() for _ in range(n)]
+    sc2_ids      = [nid() for _ in range(n)]
+    afader_ids   = [nid() for _ in range(n)]
+    ameter_ids   = [nid() for _ in range(n)]
+    apvol_ids    = [nid() for _ in range(n)]
+    apmute_ids   = [nid() for _ in range(n)]
+
+    vtg_comp_id    = nid()
+    master_ac_id   = nid()
+    master_pan_id  = nid()
+    master_mix_id  = nid()
+    master_af_id   = nid()
+    master_am_id   = nid()
+    master_ap1_id  = nid()
+    master_ap2_id  = nid()
+    master_inlet_id = nid()
+
+    use_prog_vtg_id  = prog_vtg_id  or nid()
+    use_prog_atg_id  = nid()
+    use_prog_dtg_id  = nid()
+    use_prog_vct_uid = new_uid()
+    use_prog_act_uid = new_uid()
+
+    L = []
+    def w(s): L.append(s)
+
+    # Links
+    for i in range(n):
+        w(f'\\t<Link ObjectID="{link_ids[i]}" ClassID="149d4ea5-a7d4-4b34-9bb7-16d783904bf2" Version="1">')
+        w(f'\\t\\t<TrackItemGroup Version="1"><TrackItems Version="1">')
+        w(f'\\t\\t\\t<TrackItem Index="0" ObjectRef="{vcti_ids[i]}"/>')
+        w(f'\\t\\t\\t<TrackItem Index="1" ObjectRef="{acti_ids[i]}"/>')
+        w(f'\\t\\t</TrackItems></TrackItemGroup>')
+        w(f'\\t</Link>')
+
+    # VideoTrackGroup
+    w(f'\\t<VideoTrackGroup ObjectID="{use_prog_vtg_id}" ClassID="9e9abf7a-0918-49c2-91ae-991b5dde77bb" Version="13">')
+    w(f'\\t\\t<TrackGroup Version="1"><Tracks Version="1">')
+    w(f'\\t\\t\\t<Track Index="0" ObjectURef="{use_prog_vct_uid}"/>')
+    w(f'\\t\\t</Tracks><FrameRate>{tpf}</FrameRate><NextTrackID>2</NextTrackID></TrackGroup>')
+    w(f'\\t\\t<FrameRect>0,0,1920,1080</FrameRect>')
+    w(f'\\t\\t<ColorManagementSettings>{{"autoToneMapEnabled":true,"enableLogColorManagement":2,"graphicsWhiteLuminance":203}}</ColorManagementSettings>')
+    w(f'\\t\\t<OutputColorSpace>{{"baseColorProfile":{{"colorProfileData":"AQAAAGQAAAA=","colorProfileName":"BT.709,8-bit,Display-Referred"}},"baseProfileType":1,"colorSpaceMetadata":{{"peakLuminance":100}}}}</OutputColorSpace>')
+    w(f'\\t\\t<AutoInputGamutCompressionEnabled>true</AutoInputGamutCompressionEnabled>')
+    w(f'\\t\\t<ImmersiveVideoVRConfiguration>{{"ambisonicsHRIR":"","ambisonicsMonitoringType":0,"capturedHorizontalView":360,"capturedVerticalView":180,"fieldOfHorizontalView":108,"fieldOfVerticalView":108,"projectionType":0,"stereoscopicEye":0,"stereoscopicType":0,"version":3}}</ImmersiveVideoVRConfiguration>')
+    w(f'\\t\\t<ToneMappingDesaturation>0.5</ToneMappingDesaturation>')
+    w(f'\\t\\t<IsGraphicsWhiteSameAsProject>false</IsGraphicsWhiteSameAsProject>')
+    w(f'\\t\\t<IsColorAwareEffectsEnabledSameAsProject>false</IsColorAwareEffectsEnabledSameAsProject>')
+    w(f'\\t\\t<ComponentOwner Version="1"><Components ObjectRef="{vtg_comp_id}"/></ComponentOwner>')
+    w(f'\\t</VideoTrackGroup>')
+
+    # AudioTrackGroup
+    w(f'\\t<AudioTrackGroup ObjectID="{use_prog_atg_id}" ClassID="9b9238b9-53a8-4cc3-b03f-b36246d052e6" Version="6">')
+    w(f'\\t\\t<TrackGroup Version="1"><Tracks Version="1">')
+    w(f'\\t\\t\\t<Track Index="0" ObjectURef="{use_prog_act_uid}"/>')
+    w(f'\\t\\t</Tracks><FrameRate>5292000</FrameRate><NextTrackID>2</NextTrackID></TrackGroup>')
+    w(f'\\t\\t<MasterTrack ObjectRef="{master_mix_id}"/><AutomationSafeFlags>0</AutomationSafeFlags>')
+    w(f'\\t\\t<NumAdaptiveChannels>2</NumAdaptiveChannels><ID>{new_uid()}</ID>')
+    w(f'\\t</AudioTrackGroup>')
+
+    # DataTrackGroup
+    w(f'\\t<DataTrackGroup ObjectID="{use_prog_dtg_id}" ClassID="b714b71d-6838-48dd-9b77-db19088ced7e" Version="1">')
+    w(f'\\t\\t<TrackGroup Version="1"><FrameRate>{tpf}</FrameRate><NextTrackID>1</NextTrackID></TrackGroup>')
+    w(f'\\t</DataTrackGroup>')
+
+    # VTG ComponentChain
+    w(f'\\t<VideoComponentChain ObjectID="{vtg_comp_id}" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">')
+    w(f'\\t\\t<ComponentChain Version="3"></ComponentChain>')
+    w(f'\\t</VideoComponentChain>')
+
+    # Per-cut VCTIs, ACTIs, SubClips, ComponentChains
+    for i, seg in enumerate(cut_segs):
+        s, e, cam = seg['s'], seg['e'], seg['cam']
+
+        w(f'\\t<VideoComponentChain ObjectID="{vchain_ids[i]}" ClassID="0970e08a-f58f-4108-b29a-1a717b8e12e2" Version="3">')
+        w(f'\\t\\t<DefaultMotion>true</DefaultMotion><DefaultOpacity>true</DefaultOpacity>')
+        w(f'\\t\\t<DefaultMotionComponentID>1</DefaultMotionComponentID><DefaultOpacityComponentID>2</DefaultOpacityComponentID>')
+        w(f'\\t\\t<ComponentChain Version="3"><Node Version="1"><Properties Version="1">')
+        w(f'\\t\\t\\t<MZ.ComponentChain.ActiveComponentID>2</MZ.ComponentChain.ActiveComponentID>')
+        w(f'\\t\\t\\t<MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>')
+        w(f'\\t\\t</Properties></Node></ComponentChain>')
+        w(f'\\t</VideoComponentChain>')
+
+        w(f'\\t<SubClip ObjectID="{vsub_ids[i]}" ClassID="e0c58dc9-dbdd-4166-aef7-5db7e3f22e84" Version="6">')
+        w(f'\\t\\t<Clip ObjectRef="{vc_ids[i]}"/><MasterClip ObjectURef="{mc_master_uid}"/>')
+        w(f'\\t\\t<OrigChGrp>0</OrigChGrp><n>Multicam</n>')
+        w(f'\\t</SubClip>')
+
+        w(f'\\t<VideoClipTrackItem ObjectID="{vcti_ids[i]}" ClassID="368b0406-29e3-4923-9fcd-094fbf9a1089" Version="8">')
+        w(f'\\t\\t<ClipTrackItem Version="8"><ComponentOwner Version="1"><Components ObjectRef="{vchain_ids[i]}"/></ComponentOwner>')
+        w(f'\\t\\t<TrackItem Version="4">')
+        if s > 0: w(f'\\t\\t\\t<Start>{s}</Start>')
+        w(f'\\t\\t\\t<End>{e}</End>')
+        w(f'\\t\\t</TrackItem>')
+        w(f'\\t\\t<SubClip ObjectRef="{vsub_ids[i]}"/></ClipTrackItem>')
+        w(f'\\t\\t<FrameRect>0,0,1920,1080</FrameRect><PixelAspectRatio>1,1</PixelAspectRatio>')
+        w(f'\\t\\t<ToneMapSettings>{{"peak":-1,"version":3}}</ToneMapSettings>')
+        w(f'\\t</VideoClipTrackItem>')
+
+        w(f'\\t<AudioComponentChain ObjectID="{achain_ids[i]}" ClassID="3cb131d1-d3c0-47ae-a19a-bdf75ea11674" Version="4">')
+        w(f'\\t\\t<DefaultVol>true</DefaultVol><DefaultVolumeComponentID>1</DefaultVolumeComponentID>')
+        w(f'\\t\\t<DefaultChannelVolumeComponentID>2</DefaultChannelVolumeComponentID>')
+        w(f'\\t\\t<ComponentChain Version="3"><Node Version="1"><Properties Version="1">')
+        w(f'\\t\\t\\t<MZ.ComponentChain.ActiveComponentID>1</MZ.ComponentChain.ActiveComponentID>')
+        w(f'\\t\\t\\t<MZ.ComponentChain.ActiveComponentParamIndex>4294967295</MZ.ComponentChain.ActiveComponentParamIndex>')
+        w(f'\\t\\t</Properties></Node></ComponentChain>')
+        w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+        w(f'\\t\\t<ChannelType>1</ChannelType>')
+        w(f'\\t</AudioComponentChain>')
+
+        w(f'\\t<SubClip ObjectID="{asub_ids[i]}" ClassID="e0c58dc9-dbdd-4166-aef7-5db7e3f22e84" Version="6">')
+        w(f'\\t\\t<Clip ObjectRef="{ac_ids[i]}"/><MasterClip ObjectURef="{mc_master_uid}"/>')
+        w(f'\\t\\t<OrigChGrp>0</OrigChGrp><n>Multicam</n>')
+        w(f'\\t</SubClip>')
+
+        w(f'\\t<AudioClipTrackItem ObjectID="{acti_ids[i]}" ClassID="064ec682-9ba6-11d5-af2d-9ca32c7d6164" Version="11">')
+        w(f'\\t\\t<ClipTrackItem Version="8"><ComponentOwner Version="1"><Components ObjectRef="{achain_ids[i]}"/></ComponentOwner>')
+        w(f'\\t\\t<TrackItem Version="4">')
+        if s > 0: w(f'\\t\\t\\t<Start>{s}</Start>')
+        w(f'\\t\\t\\t<End>{e}</End>')
+        w(f'\\t\\t</TrackItem>')
+        w(f'\\t\\t<SubClip ObjectRef="{asub_ids[i]}"/></ClipTrackItem>')
+        w(f'\\t\\t<PreRenderComponentChainHashVersion>1</PreRenderComponentChainHashVersion>')
+        w(f'\\t\\t<ID>{new_uid()}</ID>')
+        w(f'\\t</AudioClipTrackItem>')
+
+    # Program cut VideoClipTrack
+    w(f'\\t<VideoClipTrack ObjectUID="{use_prog_vct_uid}" ClassID="f68dcd81-8805-11d5-af2d-9bfa89d4ddd4" Version="1">')
+    w(f'\\t\\t<ClipTrack Version="2"><Track Version="4"><Node Version="1"><Properties Version="1">')
+    w(f'\\t\\t\\t<TL.SQTrackShy>0</TL.SQTrackShy><MZ.TrackTargeted>1</MZ.TrackTargeted>')
+    w(f'\\t\\t\\t<TL.SQTrackExpanded>0</TL.SQTrackExpanded><TL.SQTrackExpandedHeight>41</TL.SQTrackExpandedHeight>')
+    w(f'\\t\\t</Properties></Node>')
+    w(f'\\t\\t<MediaType>{VTG_GUID}</MediaType><Index>0</Index><ID>1</ID></Track>')
+    w(f'\\t\\t<ClipItems Version="3"><TrackItems Version="1">')
+    for i in range(n): w(f'\\t\\t\\t<TrackItem Index="{i}" ObjectRef="{vcti_ids[i]}"/>')
+    w(f'\\t\\t</TrackItems><MediaType>{VTG_GUID}</MediaType><Index>0</Index></ClipItems>')
+    w(f'\\t\\t<TransitionItems Version="3"><MediaType>{VTG_GUID}</MediaType><Index>0</Index></TransitionItems>')
+    w(f'\\t\\t</ClipTrack>')
+    w(f'\\t</VideoClipTrack>')
+
+    # Program cut AudioClipTrack
+    w(f'\\t<AudioClipTrack ObjectUID="{use_prog_act_uid}" ClassID="097f6203-99ae-11d5-84f2-8cf14bde7040" Version="7">')
+    w(f'\\t\\t<ClipTrack Version="2"><Track Version="4"><Node Version="1"><Properties Version="1">')
+    w(f'\\t\\t\\t<TL.SQTrackShy>0</TL.SQTrackShy><TL.SQTrackAudioKeyframeStyle>0</TL.SQTrackAudioKeyframeStyle>')
+    w(f'\\t\\t\\t<MZ.TrackTargeted>1</MZ.TrackTargeted><CM.KeyframeMode>true</CM.KeyframeMode>')
+    w(f'\\t\\t\\t<TL.SQTrackExpanded>0</TL.SQTrackExpanded><TL.SQTrackExpandedHeight>41</TL.SQTrackExpandedHeight>')
+    w(f'\\t\\t</Properties></Node>')
+    w(f'\\t\\t<MediaType>{ATG_GUID}</MediaType><Index>0</Index><ID>2</ID></Track>')
+    w(f'\\t\\t<ClipItems Version="3"><TrackItems Version="1">')
+    for i in range(n): w(f'\\t\\t\\t<TrackItem Index="{i}" ObjectRef="{acti_ids[i]}"/>')
+    w(f'\\t\\t</TrackItems><MediaType>{ATG_GUID}</MediaType><Index>0</Index></ClipItems>')
+    w(f'\\t\\t<TransitionItems Version="3"><MediaType>{ATG_GUID}</MediaType><Index>0</Index></TransitionItems>')
+    w(f'\\t\\t</ClipTrack>')
+    w(f'\\t\\t<AudioTrack Version="12"><ComponentOwner Version="1"><Components ObjectRef="{master_ac_id}"/></ComponentOwner>')
+    w(f'\\t\\t<Panner ObjectRef="{master_pan_id}"/><NextPannerID>4294967279</NextPannerID><ID>{new_uid()}</ID>')
+    w(f'\\t\\t</AudioTrack>')
+    w(f'\\t</AudioClipTrack>')
+
+    # AudioMixTrack (master)
+    w(f'\\t<AudioMixTrack ObjectID="{master_mix_id}" ClassID="4b1d8400-e89e-11d5-abc4-a1a13b1e80a0" Version="4">')
+    w(f'\\t\\t<AudioTrack Version="12"><ComponentOwner Version="1"><Components ObjectRef="{master_ac_id}"/></ComponentOwner>')
+    w(f'\\t\\t<Panner ObjectRef="{master_pan_id}"/><SubType>3</SubType><Assign>0</Assign>')
+    w(f'\\t\\t<NextPannerID>4294967279</NextPannerID><ID>{new_uid()}</ID></AudioTrack>')
+    w(f'\\t\\t<Track Version="4"><Node Version="1"><Properties Version="1">')
+    w(f'\\t\\t\\t<TL.SQTrackExpanded>0</TL.SQTrackExpanded><TL.SQTrackExpandedHeight>41</TL.SQTrackExpandedHeight>')
+    w(f'\\t\\t</Properties></Node>')
+    w(f'\\t\\t<MediaType>{ATG_GUID}</MediaType><Index>0</Index><ID>1</ID></Track>')
+    w(f'\\t\\t<Inlet ObjectRef="{master_inlet_id}"/>')
+    w(f'\\t</AudioMixTrack>')
+
+    # Audio chain for master
+    w(f'\\t<AudioComponentChain ObjectID="{master_ac_id}" ClassID="3cb131d1-d3c0-47ae-a19a-bdf75ea11674" Version="4">')
+    w(f'\\t\\t<ComponentChain Version="3"><Components Version="1">')
+    w(f'\\t\\t\\t<Component Index="0" ObjectRef="{master_af_id}"/>')
+    w(f'\\t\\t\\t<Component Index="1" ObjectRef="{master_am_id}"/>')
+    w(f'\\t\\t</Components></ComponentChain>')
+    w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+    w(f'\\t\\t<ChannelType>1</ChannelType>')
+    w(f'\\t</AudioComponentChain>')
+
+    w(f'\\t<DefaultPanProcessor ObjectID="{master_pan_id}" ClassID="33a94282-ee2c-11d5-abc4-c1cd7f9e3c10" Version="2">')
+    w(f'\\t\\t<PanProcessor Version="3"><AudioComponent Version="3"><Component Version="7"><ID>4294967280</ID></Component>')
+    w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+    w(f'\\t\\t<ChannelType>1</ChannelType><FrameRate>5292000</FrameRate><AudioComponentType>0</AudioComponentType>')
+    w(f'\\t\\t</AudioComponent></PanProcessor>')
+    w(f'\\t\\t<DefaultPannerInputChannelType>1</DefaultPannerInputChannelType>')
+    w(f'\\t\\t<DefaultPannerOutputChannelType>1</DefaultPannerOutputChannelType>')
+    w(f'\\t</DefaultPanProcessor>')
+
+    w(f'\\t<AudioTrackInlet ObjectID="{master_inlet_id}" ClassID="be3af080-e8c6-11d5-abc4-a1c6d5dee670" Version="4">')
+    w(f'\\t\\t<Sources Version="1"><Source Index="0" ObjectURef="{use_prog_act_uid}"/></Sources>')
+    w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+    w(f'\\t</AudioTrackInlet>')
+
+    w(f'\\t<AudioFader ObjectID="{master_af_id}" ClassID="1a38c583-ed5c-11d5-abc4-c1cbf61ec590" Version="3">')
+    w(f'\\t\\t<AudioComponent Version="3"><Component Version="7"><Params Version="1">')
+    w(f'\\t\\t\\t<Param Index="0" ObjectRef="{master_ap1_id}"/>')
+    w(f'\\t\\t\\t<Param Index="1" ObjectRef="{master_ap2_id}"/>')
+    w(f'\\t\\t</Params><ID>1</ID></Component>')
+    w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+    w(f'\\t\\t<ChannelType>1</ChannelType><FrameRate>5292000</FrameRate><AudioComponentType>1</AudioComponentType>')
+    w(f'\\t\\t</AudioComponent>')
+    w(f'\\t</AudioFader>')
+    w(f'\\t<AudioMeter ObjectID="{master_am_id}" ClassID="72ea4700-f615-11d5-abc4-c186585e63e0" Version="2">')
+    w(f'\\t\\t<AudioComponent Version="3"><Component Version="7"><ID>2</ID></Component>')
+    w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+    w(f'\\t\\t<ChannelType>1</ChannelType><FrameRate>5292000</FrameRate><AudioComponentType>2</AudioComponentType>')
+    w(f'\\t\\t</AudioComponent>')
+    w(f'\\t</AudioMeter>')
+    w(f'\\t<AudioComponentParam ObjectID="{master_ap1_id}" ClassID="a714635e-a628-4b27-9d59-77eba47dbc1a" Version="10">')
+    w(f'\\t\\t<UpperBound>5.6234130859375</UpperBound><RangeLocked>false</RangeLocked><UnitsString>dB</UnitsString><n>Volume</n>')
+    w(f'\\t</AudioComponentParam>')
+    w(f'\\t<AudioComponentParam ObjectID="{master_ap2_id}" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">')
+    w(f'\\t\\t<RangeLocked>false</RangeLocked><n>Mute</n>')
+    w(f'\\t</AudioComponentParam>')
+
+    # Per-cut VideoClips, AudioClips, secondary content, audio params
+    for i, seg in enumerate(cut_segs):
+        s, e, cam = seg['s'], seg['e'], seg['cam']
+        tidx = cam_to_tidx.get(cam, 0)
+
+        w(f'\\t<VideoClip ObjectID="{vc_ids[i]}" ClassID="9308dbef-2440-4acb-9ab2-953b9a4e82ec" Version="11">')
+        w(f'\\t\\t<Clip Version="18"><Node Version="1"><Properties Version="1">')
+        w(f'\\t\\t\\t<asl.clip.label.color>5814353</asl.clip.label.color>')
+        w(f'\\t\\t\\t<asl.clip.label.name>BE.Prefs.LabelColors.5</asl.clip.label.name>')
+        w(f'\\t\\t</Properties></Node>')
+        w(f'\\t\\t<Source ObjectRef="{vss_ref}"/>')
+        w(f'\\t\\t<ClipID>{new_uid()}</ClipID>')
+        w(f'\\t\\t<InPoint>{s}</InPoint><OutPoint>{e}</OutPoint>')
+        w(f'\\t\\t<IsMulticam>true</IsMulticam>')
+        w(f'\\t\\t<SelectedTrackIndex>{tidx}</SelectedTrackIndex>')
+        w(f'\\t\\t</Clip>')
+        w(f'\\t</VideoClip>')
+
+        w(f'\\t<AudioClip ObjectID="{ac_ids[i]}" ClassID="b8830d03-de02-41ee-84ec-fe566dc70cd9" Version="8">')
+        w(f'\\t\\t<Clip Version="18"><Node Version="1"><Properties Version="1">')
+        w(f'\\t\\t\\t<asl.clip.label.color>5814353</asl.clip.label.color>')
+        w(f'\\t\\t\\t<asl.clip.label.name>BE.Prefs.LabelColors.5</asl.clip.label.name>')
+        w(f'\\t\\t</Properties></Node>')
+        w(f'\\t\\t<Source ObjectRef="{ass_ref}"/>')
+        w(f'\\t\\t<ClipID>{new_uid()}</ClipID>')
+        w(f'\\t\\t<InPoint>{s}</InPoint><OutPoint>{e}</OutPoint>')
+        w(f'\\t\\t</Clip>')
+        w(f'\\t\\t<SecondaryContents Version="1">')
+        w(f'\\t\\t\\t<SecondaryContentItem Index="0" ObjectRef="{sc1_ids[i]}"/>')
+        w(f'\\t\\t\\t<SecondaryContentItem Index="1" ObjectRef="{sc2_ids[i]}"/>')
+        w(f'\\t\\t</SecondaryContents>')
+        w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+        w(f'\\t</AudioClip>')
+
+    for i in range(n):
+        w(f'\\t<SecondaryContent ObjectID="{sc1_ids[i]}" ClassID="f9d004b5-cb04-4e2f-af6f-64fadc2c4be9" Version="1">')
+        w(f'\\t\\t<Content ObjectRef="{ass_ref}"/><ChannelIndex>0</ChannelIndex>')
+        w(f'\\t</SecondaryContent>')
+        w(f'\\t<SecondaryContent ObjectID="{sc2_ids[i]}" ClassID="f9d004b5-cb04-4e2f-af6f-64fadc2c4be9" Version="1">')
+        w(f'\\t\\t<Content ObjectRef="{ass_ref}"/><ChannelIndex>1</ChannelIndex>')
+        w(f'\\t</SecondaryContent>')
+        w(f'\\t<AudioFader ObjectID="{afader_ids[i]}" ClassID="1a38c583-ed5c-11d5-abc4-c1cbf61ec590" Version="3">')
+        w(f'\\t\\t<AudioComponent Version="3"><Component Version="7"><Params Version="1">')
+        w(f'\\t\\t\\t<Param Index="0" ObjectRef="{apvol_ids[i]}"/>')
+        w(f'\\t\\t\\t<Param Index="1" ObjectRef="{apmute_ids[i]}"/>')
+        w(f'\\t\\t</Params><ID>1</ID></Component>')
+        w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+        w(f'\\t\\t<ChannelType>1</ChannelType><FrameRate>5292000</FrameRate><AudioComponentType>1</AudioComponentType>')
+        w(f'\\t\\t</AudioComponent>')
+        w(f'\\t</AudioFader>')
+        w(f'\\t<AudioMeter ObjectID="{ameter_ids[i]}" ClassID="72ea4700-f615-11d5-abc4-c186585e63e0" Version="2">')
+        w(f'\\t\\t<AudioComponent Version="3"><Component Version="7"><ID>2</ID></Component>')
+        w(f'\\t\\t<AudioChannelLayout>[{{"channellabel":100}},{{"channellabel":101}}]</AudioChannelLayout>')
+        w(f'\\t\\t<ChannelType>1</ChannelType><FrameRate>5292000</FrameRate><AudioComponentType>2</AudioComponentType>')
+        w(f'\\t\\t</AudioComponent>')
+        w(f'\\t</AudioMeter>')
+        w(f'\\t<AudioComponentParam ObjectID="{apvol_ids[i]}" ClassID="a714635e-a628-4b27-9d59-77eba47dbc1a" Version="10">')
+        w(f'\\t\\t<UpperBound>5.6234130859375</UpperBound><RangeLocked>false</RangeLocked><UnitsString>dB</UnitsString><n>Volume</n>')
+        w(f'\\t</AudioComponentParam>')
+        w(f'\\t<AudioComponentParam ObjectID="{apmute_ids[i]}" ClassID="32657501-3aa4-445f-a49b-d09ecb9fa1ae" Version="10">')
+        w(f'\\t\\t<RangeLocked>false</RangeLocked><n>Mute</n>')
+        w(f'\\t</AudioComponentParam>')
+
+    # Program Cut Sequence
+    w(f'\\t<Sequence ObjectUID="{new_uid()}" ClassID="6a15d903-8739-11d5-af2d-9b7855ad8974" Version="12">')
+    w(f'\\t\\t<Node Version="1"><Properties Version="1">')
+    w(f'\\t\\t\\t<Monitor.ProgramZoomIn>0</Monitor.ProgramZoomIn><Monitor.ProgramZoomOut>{dur}</Monitor.ProgramZoomOut>')
+    w(f'\\t\\t\\t<TL.SQHeaderWidth>204</TL.SQHeaderWidth><TL.SQHideShyTracks>0</TL.SQHideShyTracks>')
+    w(f'\\t\\t\\t<TL.SQAVDividerPosition>0.5</TL.SQAVDividerPosition>')
+    w(f'\\t\\t\\t<MZ.WorkInPoint>0</MZ.WorkInPoint><MZ.WorkOutPoint>{dur}</MZ.WorkOutPoint>')
+    w(f'\\t\\t\\t<AMM.CurrentSolo>[]</AMM.CurrentSolo>')
+    w(f'\\t\\t\\t<MZ.Sequence.VideoTimeDisplayFormat>105</MZ.Sequence.VideoTimeDisplayFormat>')
+    w(f'\\t\\t\\t<MZ.Sequence.EditingModeGUID>9678af98-a7b7-4bdb-b477-7ac9c8df4a4e</MZ.Sequence.EditingModeGUID>')
+    w(f'\\t\\t\\t<MZ.Sequence.PreviewUseMaxBitDepth>false</MZ.Sequence.PreviewUseMaxBitDepth>')
+    w(f'\\t\\t\\t<MZ.Sequence.PreviewUseMaxRenderQuality>false</MZ.Sequence.PreviewUseMaxRenderQuality>')
+    w(f'\\t\\t\\t<MZ.Sequence.AudioTimeDisplayFormat>200</MZ.Sequence.AudioTimeDisplayFormat>')
+    w(f'\\t\\t\\t<MZ.Sequence.PreviewFrameSizeWidth>1920</MZ.Sequence.PreviewFrameSizeWidth>')
+    w(f'\\t\\t\\t<MZ.Sequence.PreviewFrameSizeHeight>1080</MZ.Sequence.PreviewFrameSizeHeight>')
+    w(f'\\t\\t</Properties></Node>')
+    w(f'\\t\\t<PersistentGroupContainer Version="1"><LinkContainer Version="1"><Links Version="1">')
+    for i in range(n): w(f'\\t\\t\\t<Link Index="{i}" ObjectRef="{link_ids[i]}"/>')
+    w(f'\\t\\t</Links></LinkContainer></PersistentGroupContainer>')
+    w(f'\\t\\t<TrackGroups Version="1">')
+    w(f'\\t\\t\\t<TrackGroup Version="1" Index="0"><First>{VTG_GUID}</First><Second ObjectRef="{use_prog_vtg_id}"/></TrackGroup>')
+    w(f'\\t\\t\\t<TrackGroup Version="1" Index="1"><First>{ATG_GUID}</First><Second ObjectRef="{use_prog_atg_id}"/></TrackGroup>')
+    w(f'\\t\\t\\t<TrackGroup Version="1" Index="2"><First>{DTG_GUID}</First><Second ObjectRef="{use_prog_dtg_id}"/></TrackGroup>')
+    w(f'\\t\\t</TrackGroups>')
+    w(f'\\t\\t<n>ATEM_Program_Cut</n>')
+    w(f'\\t\\t<PreviewFormatIdentifier>fc3cd4d9-d839-8259-9276-05c5000000ea</PreviewFormatIdentifier>')
+    w(f'\\t</Sequence>')
+
+    return '\\n'.join(L)
+
+def convert_bytes(drp_bytes, prproj_bytes, log_cb=None):
+    """Convert DRP + PRPROJ bytes, return output PRPROJ bytes."""
+    def log(msg):
+        if log_cb: log_cb(msg)
+
+    log("Parsing .drp file...")
+    drp_text = drp_bytes.decode('utf-8')
+    drp = parse_drp_text(drp_text)
+    dur_s = drp['total_frames'] / drp['fps']
+    h, m, s = int(dur_s//3600), int((dur_s%3600)//60), int(dur_s%60)
+    log(f"  {len(drp['cut_segs'])} cuts · {drp['cam_count']} cameras · {h}h {m}m {s}s · {drp['video_mode']}")
+
+    log("Reading .prproj...")
+    xml = gzip.decompress(prproj_bytes).decode('utf-8')
+
+    log("Analyzing prproj...")
+    analysis = analyze_prproj(xml)
+    log(f"  Multicam MasterClip: {analysis['mc_master_uid'][:8]}...")
+    log(f"  VideoSequenceSource: ObjectRef={analysis['vss_ref']}")
+
+    first_prog_link_pos, last_seq_end = find_insertion_point(xml, analysis)
+    log(f"  Insertion at char {first_prog_link_pos:,}")
+
+    log(f"Building {len(drp['cut_segs'])} cut segments...")
+    replacement = build_program_cut(drp, analysis)
+
+    log("Assembling...")
+    new_xml = xml[:first_prog_link_pos] + replacement + xml[last_seq_end:]
+
+    log("Compressing...")
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=6) as gz:
+        gz.write(new_xml.encode('utf-8'))
+    
+    log(f"Done! {len(buf.getvalue())//1024} KB")
+    return buf.getvalue()
+
+`;
+
+// ── Init Pyodide ───────────────────────────────────────────────────────────
+async function initPyodide() {
+  const dot = document.getElementById('pyDot');
+  const txt = document.getElementById('pyText');
+  try {
+    pyodide = await loadPyodide();
+    await pyodide.runPythonAsync(PY_CODE);
+    dot.className = 'py-dot ready';
+    txt.textContent = 'Python runtime ready';
+    pyReady = true;
+    checkReady();
+  } catch(e) {
+    dot.className = 'py-dot error';
+    txt.textContent = 'Failed to load Python: ' + e.message;
+    console.error(e);
+  }
+}
+
+// ── Logging ────────────────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg, cls='') {
+  logEl.classList.add('show');
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── File handling ──────────────────────────────────────────────────────────
+function setupDrop(zoneId, inputId, infoId, accept, onFile) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const info = document.getElementById(infoId);
+  const isPrproj = zone.classList.contains('prproj');
+
+  async function handle(file) {
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!accept.includes(ext)) return;
+    const buf = await file.arrayBuffer();
+    zone.classList.add('loaded');
+    zone.querySelector('.drop-title').textContent = 'Click to change file';
+    info.textContent = file.name;
+    onFile(new Uint8Array(buf), file.name);
+    checkReady();
+  }
+
+  input.addEventListener('change', e => handle(e.target.files[0]));
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('over'); handle(e.dataTransfer.files[0]); });
+}
+
+function checkReady() {
+  const btn = document.getElementById('convertBtn');
+  btn.disabled = !(pyReady && drpBytes && prprojBytes);
+}
+
+// ── DRP parsing (JS) for instant stats ────────────────────────────────────
+function parseDrpStats(bytes) {
+  try {
+    const text = new TextDecoder().decode(bytes);
+    const lines = text.trim().split('\n');
+    const header = JSON.parse(lines[0]);
+    const last = JSON.parse(lines[lines.length - 1]);
+    const vm = header.videoMode || '1080p50';
+    const fpsMap = {'1080p25':25,'1080p50':50,'1080p2997':30,'1080p60':60,
+                    '720p50':50,'720p5994':60,'2160p25':25,'2160p50':50};
+    const fps = fpsMap[vm] || 50;
+    function tcf(tc) {
+      const [h,m,s,f] = tc.split(':').map(Number);
+      return ((h*3600+m*60+s)*fps)+f;
+    }
+    const totalFrames = tcf(last.masterTimecode) - tcf(header.masterTimecode);
+    let cuts = 0; const cams = new Set();
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        if (e.mixEffectBlocks && e.mixEffectBlocks[0]) {
+          const src = e.mixEffectBlocks[0].source;
+          if (src>=1 && src<=4) { cuts++; cams.add(src); }
+        }
+      } catch {}
+    }
+    const dur = totalFrames / fps;
+    const h = Math.floor(dur/3600), m2 = Math.floor((dur%3600)/60), s2 = Math.floor(dur%60);
+    document.getElementById('sCuts').textContent = cuts;
+    document.getElementById('sCams').textContent = cams.size;
+    document.getElementById('sDur').textContent = `${h}h ${m2}m ${s2}s`;
+    document.getElementById('sFps').textContent = vm;
+    document.getElementById('drpStats').classList.add('show');
+  } catch(e) { console.warn('Stats parse failed', e); }
+}
+
+// ── Setup drops ────────────────────────────────────────────────────────────
+setupDrop('drpZone', 'drpInput', 'drpInfo', ['drp'], (bytes, name) => {
+  drpBytes = bytes; drpName = name;
+  parseDrpStats(bytes);
+});
+
+setupDrop('prprojZone', 'prprojInput', 'prprojInfo', ['prproj'], (bytes, name) => {
+  prprojBytes = bytes; prprojName = name;
+});
+
+// ── Convert ────────────────────────────────────────────────────────────────
+document.getElementById('convertBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('convertBtn');
+  const dlBtn = document.getElementById('dlBtn');
+  btn.disabled = true;
+  btn.classList.add('running');
+  btn.textContent = 'Converting…';
+  dlBtn.classList.remove('show');
+  logEl.innerHTML = '';
+  logEl.classList.add('show');
+
+  try {
+    // Pass bytes to Pyodide
+    pyodide.globals.set('_drp_bytes', drpBytes);
+    pyodide.globals.set('_prproj_bytes', prprojBytes);
+    pyodide.globals.set('_log_lines', []);
+
+    const result = await pyodide.runPythonAsync(`
+import js
+_log = []
+def _log_cb(msg):
+    _log.append(msg)
+
+result_bytes = convert_bytes(
+    bytes(_drp_bytes),
+    bytes(_prproj_bytes),
+    log_cb=_log_cb
+)
+_log
+`);
+
+    // Show logs
+    const lines = result.toJs();
+    for (const line of lines) {
+      const cls = line.startsWith('  ') ? '' : 'hi';
+      log(line, cls);
+    }
+
+    // Get result
+    const outBytes = pyodide.globals.get('result_bytes').toJs();
+    const blob = new Blob([outBytes], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const outName = drpName.replace(/\.drp$/i, '') + '_program_cut.prproj';
+    dlBtn.href = url;
+    dlBtn.download = outName;
+    dlBtn.textContent = `↓ Download ${outName}`;
+    dlBtn.classList.add('show');
+    log('✓ Open in Premiere and look for the ATEM_Program_Cut sequence.', 'ok');
+
+  } catch(e) {
+    log('Error: ' + e.message, 'err');
+    console.error(e);
+  } finally {
+    btn.classList.remove('running');
+    btn.textContent = 'Convert';
+    checkReady();
+  }
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+initPyodide();
+</script>
+</body>
+</html>
